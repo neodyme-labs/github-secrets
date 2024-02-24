@@ -1,6 +1,8 @@
-# Github Secrets
+# Gitlab Secrets
 
-This tool analyzes a given Github repository and searches for dangling or force-pushed commits, containing potential secret or interesting information.
+This tool analyzes a given Gitlab repository and searches for dangling or force-pushed commits, containing potential secret or interesting information.
+
+It's based on <https://github.com/neodyme-labs/github-secrets> which does the same for Github
 
 ## Requirements
 
@@ -17,34 +19,24 @@ git clone https://github.com/neodyme-labs/github-secrets.git
 
 To get a list of basic options and switches use:
 ```bash
-python3 github_scanner.py -h
+python3 gitlab_scanner.py -h
 ```
 
-You can run this script either completely unauthenticated, with rather low Github API rate limits, or your export a generated [API token](https://github.com/settings/tokens).
+You can run this script either completely unauthenticated, with rather low Github API rate limits, or your export a generated API token by following [this guide](https://docs.gitlab.com/ee/user/profile/personal_access_tokens.html).
 
-The tokens need no privileges at all and are only used, for authentication against the API. A fine-grained personal access token is required for this project without any additional permissions.
+The tokens need requires `read_api` scope.
 
 To export the token use:
 ```bash
-export GITHUB_ACCOUNT_TOKEN=<your_secret_api_token>
+export GITLAB_ACCOUNT_TOKEN=<your_secret_api_token>
 ```
 
 To run the script and scan a repository:
 ```bash
-python3 github_scanner.py <username>/<repository>
+python3 gitlab_scanner.py <organisation>/<repository>
 ```
 
-## Resources
-
-To check your current API rate limits and usage with token:
-```bash
-curl -L -H "Accept: application/vnd.github+json" -H "Authorization: Bearer <your_secret_api_token>" -H "X-GitHub-Api-Version: 2022-11-28" https://api.github.com/rate_limit
-```
-
-Without token:
-```bash
-curl -L -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" https://api.github.com/rate_limit
-```
+An example repository for testing is <https://gitlab.com/gitlab-secrets/gitlab-secrets>
 
 ## License
 
