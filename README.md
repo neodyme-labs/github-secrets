@@ -22,13 +22,18 @@ To get a list of basic options and switches use:
 python3 gitlab_scanner.py -h
 ```
 
-You can run this script either completely unauthenticated, with rather low Github API rate limits, or your export a generated API token by following [this guide](https://docs.gitlab.com/ee/user/profile/personal_access_tokens.html).
+You can run this script either completely unauthenticated, or your generated API token by following [this guide](https://docs.gitlab.com/ee/user/profile/personal_access_tokens.html).
 
 The tokens need requires `read_api` scope.
 
 To export the token use:
 ```bash
 export GITLAB_ACCOUNT_TOKEN=<your_secret_api_token>
+```
+
+To use against a custom instance of Gitlab
+```bash
+export GITLAB_INSTANCE_URL=<your_instance_url>
 ```
 
 To run the script and scan a repository:
