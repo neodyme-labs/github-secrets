@@ -61,11 +61,16 @@ def pull_all_force_pushed_commits_from_events(repo):
 
 def pull_all_repos(user):
     repos = []
-    url = f"https://api.github.com:443/users/{user}/repos"
-    data = requests.get(url, headers=request_headers)
-    for repo in data.json():
-        repos.append(repo["name"])
-    return repos
+    start_page = 1
+    while True:
+        url = f"https://api.github.com:443/users/{user}/repos?per_page=100&page={start_page}"
+        data = requests.get(url, headers=request_headers)
+        for repo in data.json():
+            repos.append(repo["name"])
+        if len(repos) == 100:
+            start_page += 1
+        else:
+            return repos
 
 # Gets all pushed commits available from the events api endpoint
 def pull_all_commits_from_events(repo):
