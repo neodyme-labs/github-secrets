@@ -59,6 +59,14 @@ def pull_all_force_pushed_commits_from_events(repo):
     logging.info(f"Pulled {len(commits)} force-pushed commits from events")
     return commits
 
+def pull_all_repos(user):
+    repos = []
+    url = f"https://api.github.com:443/users/{user}/repos"
+    data = requests.get(url, headers=request_headers)
+    for repo in data.json():
+        repos.append(repo["name"])
+    return repos
+
 # Gets all pushed commits available from the events api endpoint
 def pull_all_commits_from_events(repo):
     commits = set()
@@ -91,7 +99,8 @@ def find_dangling_commits(repo):
 if __name__ == "__main__":
     logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
     parser = argparse.ArgumentParser(description='Github Deleted Secrets Scanner')
-    parser.add_argument('repository',help='Required repository to scan (format: username/repository)')
+    # parser.add_argument('repository',help='Required repository to scan (format: username/repository)')
+    parser.add_argument('user', help='supply user to scan all repos of')
     parser.add_argument('-v', '--verbose', action='store_true',help='Make the script more verbose.')
     args = parser.parse_args()
     if args.verbose:
@@ -103,7 +112,12 @@ if __name__ == "__main__":
         request_headers["Authorization"] = "Bearer " + github_account_token
         logging.info("Using the supplied API Token!")
     try:
-        find_dangling_commits(args.repository)
+        repos = pull_all_repos(args.user)
+        print("Found the following repos:")
+        print(repos)
+        for repo in repos:
+            find_dangling_commits(f"{args.user}/{repo}")
+
     except Exception as e:
         data = requests.get("https://api.github.com/rate_limit", headers=request_headers)
         json_data = data.json()
@@ -111,4 +125,3 @@ if __name__ == "__main__":
             logging.error("You have reached your Github API limits. If you run this script without an API Token, you have to wait for an hour, before you can scan again or you provide an API token!")
         else:
             logging.exception(e)
-        
