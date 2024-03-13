@@ -31,7 +31,7 @@ export GITHUB_ACCOUNT_TOKEN=<your_secret_api_token>
 
 To run the script and scan a repository:
 ```bash
-python3 github_scanner.py <username>/<repository>
+python3 github_scanner.py <username>
 ```
 
 ## Resources
