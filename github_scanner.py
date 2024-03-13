@@ -67,6 +67,7 @@ def pull_all_repos(user):
         data = requests.get(url, headers=request_headers)
         for repo in data.json():
             repos.append(repo["name"])
+
         if len(repos) == 100:
             start_page += 1
         else:
@@ -104,10 +105,15 @@ def find_dangling_commits(repo):
 if __name__ == "__main__":
     logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
     parser = argparse.ArgumentParser(description='Github Deleted Secrets Scanner')
-    # parser.add_argument('repository',help='Required repository to scan (format: username/repository)')
-    parser.add_argument('user', help='supply user to scan all repos of')
+    parser.add_argument('-u', '--user', type=str, help='Specify a user to scan repos for.')
+    parser.add_argument('-r', '--repo', type=str, help='Specify a user to scan repos for.')
     parser.add_argument('-v', '--verbose', action='store_true',help='Make the script more verbose.')
     args = parser.parse_args()
+
+    if (args.repo and args.user):
+        print("Error - only set one option")
+        os._exit(1)
+
     if args.verbose:
         logging.getLogger().setLevel(logging.INFO)
     else:
@@ -117,11 +123,14 @@ if __name__ == "__main__":
         request_headers["Authorization"] = "Bearer " + github_account_token
         logging.info("Using the supplied API Token!")
     try:
-        repos = pull_all_repos(args.user)
-        print("Found the following repos:")
-        print(repos)
-        for repo in repos:
-            find_dangling_commits(f"{args.user}/{repo}")
+        if args.user:
+            repos = pull_all_repos(args.user)
+            print(f"Found {len(repos)} repos for user {args.user}")
+            for repo in repos:
+                find_dangling_commits(f"{args.user}/{repo}")
+
+        if args.repo:
+            find_dangling_commits(f"{args.repo}")
 
     except Exception as e:
         data = requests.get("https://api.github.com/rate_limit", headers=request_headers)
