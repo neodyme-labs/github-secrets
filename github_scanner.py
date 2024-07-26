@@ -16,6 +16,11 @@ def commit_print(repo, commits):
     for commit in commits:
         print(f"https://github.com/{repo}/commit/{commit}")
 
+def api_error_handling(api_response):
+    if 'message' in api_response:
+        logging.error(api_response['message'])
+        os._exit(1)
+
 # Pulls the maximal amount of commits from the history with a starting commit SHA1
 def pull_commits(repo, start_commit, already_known_commits):
     initial_count = len(already_known_commits)
@@ -24,6 +29,7 @@ def pull_commits(repo, start_commit, already_known_commits):
     while not stop:
         url = f"https://api.github.com:443/repos/{repo}/commits?per_page=100&sha={start}"
         data = requests.get(url, headers=request_headers)
+        api_error_handling(data.json())
         json_data = data.json()
         if len(json_data) == 1 and json_data[0]['sha'] in already_known_commits:
             stop = True
@@ -41,6 +47,7 @@ def pull_all_commits_from_all_branches(repo):
     commits = set()
     url = f"https://api.github.com:443/repos/{repo}/branches"
     data = requests.get(url, headers=request_headers)
+    api_error_handling(data.json())
     for branch in data.json():
         logging.info(f"Pulling all commits for branch {branch['name']}")
         pull_commits(repo, branch['commit']['sha'],commits)
@@ -52,6 +59,7 @@ def pull_all_force_pushed_commits_from_events(repo):
     commits = set()
     url = f"https://api.github.com:443/repos/{repo}/events"
     data = requests.get(url, headers=request_headers)
+    api_error_handling(data.json())
     for event in data.json():
         if event["type"] == "PushEvent":
             if len(event["payload"]["commits"]) == 0:
@@ -65,6 +73,7 @@ def pull_all_repos(user):
     while True:
         url = f"https://api.github.com:443/users/{user}/repos?per_page=100&page={start_page}"
         data = requests.get(url, headers=request_headers)
+        api_error_handling(data.json())
         for repo in data.json():
             repos.append(repo["name"])
 
@@ -78,6 +87,7 @@ def pull_all_commits_from_events(repo):
     commits = set()
     url = f"https://api.github.com:443/repos/{repo}/events"
     data = requests.get(url, headers=request_headers)
+    api_error_handling(data.json())
     for event in data.json():
         if event["type"] == "PushEvent":
             for commit in event["payload"]["commits"]:
