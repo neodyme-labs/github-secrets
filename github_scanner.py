@@ -59,6 +59,20 @@ def pull_all_force_pushed_commits_from_events(repo):
     logging.info(f"Pulled {len(commits)} force-pushed commits from events")
     return commits
 
+def pull_all_repos(user):
+    repos = []
+    start_page = 1
+    while True:
+        url = f"https://api.github.com:443/users/{user}/repos?per_page=100&page={start_page}"
+        data = requests.get(url, headers=request_headers)
+        for repo in data.json():
+            repos.append(repo["name"])
+
+        if len(repos) == 100:
+            start_page += 1
+        else:
+            return repos
+
 # Gets all pushed commits available from the events api endpoint
 def pull_all_commits_from_events(repo):
     commits = set()
@@ -78,22 +92,31 @@ def find_dangling_commits(repo):
     missing_history_commits = elements_not_in_list(event_commits, historic_commits)
     probably_force_pushed_commits = elements_in_list(missing_history_commits,force_pushed_commits)
     if probably_force_pushed_commits:
-        print("\nFound these commits, which were probably force pushed and are not in the history anymore:")
+        print(f"\nFound these commits in {repo}, which were probably force pushed and are not in the history anymore:")
         commit_print(repo,probably_force_pushed_commits)
 
     dangling_commits = elements_not_in_list(missing_history_commits, probably_force_pushed_commits)
     if dangling_commits:
-        print("\nFound these dangling commits, which were in the eventlog and are not in the history anymore:")
+        print(f"\nFound these dangling commits in {repo}, which were in the eventlog and are not in the history anymore:")
         commit_print(repo,dangling_commits)
     if not probably_force_pushed_commits and not dangling_commits:
-        print("\nFound no dangling commits")
+        print(f"\nFound no dangling commits in repository: {repo}")
 
 if __name__ == "__main__":
     logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
     parser = argparse.ArgumentParser(description='Github Deleted Secrets Scanner')
-    parser.add_argument('repository',help='Required repository to scan (format: username/repository)')
+    parser.add_argument('repository_or_username',help='Required repository or user to scan (default format: username/repository, add -u for only username)')
+    parser.add_argument('-u', '--user', action='store_true', help='Make the script scan a user´s entire repos')
     parser.add_argument('-v', '--verbose', action='store_true',help='Make the script more verbose.')
     args = parser.parse_args()
+
+    if args.user and "/" in args.repository_or_username:
+        logging.error("Username cannot contain a slash! If you want to scan a specific repository of a user, remove the -u/--user flag")
+        os._exit(1)
+    elif not args.user and "/" not in args.repository_or_username:
+        logging.error("You only passed a username, add the -u/--user flag, to scann all repos or add a /repository, to scan a single repo")
+        os._exit(1)
+
     if args.verbose:
         logging.getLogger().setLevel(logging.INFO)
     else:
@@ -103,7 +126,14 @@ if __name__ == "__main__":
         request_headers["Authorization"] = "Bearer " + github_account_token
         logging.info("Using the supplied API Token!")
     try:
-        find_dangling_commits(args.repository)
+        if args.user:
+            repos = pull_all_repos(args.repository_or_username)
+            logging.info(f"Found {len(repos)} repos for user {args.repository_or_username}")
+            for repo in repos:
+                find_dangling_commits(f"{args.repository_or_username}/{repo}")
+        else:
+            find_dangling_commits(f"{args.repository_or_username}")
+
     except Exception as e:
         data = requests.get("https://api.github.com/rate_limit", headers=request_headers)
         json_data = data.json()
@@ -111,4 +141,3 @@ if __name__ == "__main__":
             logging.error("You have reached your Github API limits. If you run this script without an API Token, you have to wait for an hour, before you can scan again or you provide an API token!")
         else:
             logging.exception(e)
-        
