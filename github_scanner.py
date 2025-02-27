@@ -67,20 +67,29 @@ def pull_all_force_pushed_commits_from_events(repo):
     logging.info(f"Pulled {len(commits)} force-pushed commits from events")
     return commits
 
-def pull_all_repos(user):
+def pull_all_repos(account, is_org=False):
     repos = []
     start_page = 1
+    account_type = "orgs" if is_org else "users"
+    
     while True:
-        url = f"https://api.github.com:443/users/{user}/repos?per_page=100&page={start_page}"
+        url = f"https://api.github.com:443/{account_type}/{account}/repos?per_page=100&page={start_page}"
         data = requests.get(url, headers=request_headers)
         api_error_handling(data.json())
-        for repo in data.json():
+        
+        response_data = data.json()
+        if not response_data:
+            break
+            
+        for repo in response_data:
             repos.append(repo["name"])
 
-        if len(repos) == 100:
+        if len(response_data) == 100:
             start_page += 1
         else:
-            return repos
+            break
+            
+    return repos
 
 # Gets all pushed commits available from the events api endpoint
 def pull_all_commits_from_events(repo):
@@ -115,16 +124,21 @@ def find_dangling_commits(repo):
 if __name__ == "__main__":
     logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
     parser = argparse.ArgumentParser(description='Github Deleted Secrets Scanner')
-    parser.add_argument('repository_or_username',help='Required repository or user to scan (default format: username/repository, add -u for only username)')
-    parser.add_argument('-u', '--user', action='store_true', help='Make the script scan a user´s entire repos')
+    parser.add_argument('repository_or_account',help='Required repository or account (user/org) to scan (default format: account/repository, add -u or -o for just account name)')
+    parser.add_argument('-u', '--user', action='store_true', help='Make the script scan all repositories of a user')
+    parser.add_argument('-o', '--org', action='store_true', help='Make the script scan all repositories of an organization')
     parser.add_argument('-v', '--verbose', action='store_true',help='Make the script more verbose.')
     args = parser.parse_args()
 
-    if args.user and "/" in args.repository_or_username:
-        logging.error("Username cannot contain a slash! If you want to scan a specific repository of a user, remove the -u/--user flag")
+    # Input validation
+    if (args.user or args.org) and "/" in args.repository_or_account:
+        logging.error("Account name cannot contain a slash! If you want to scan a specific repository, remove the -u/--user or -o/--org flag")
         os._exit(1)
-    elif not args.user and "/" not in args.repository_or_username:
-        logging.error("You only passed a username, add the -u/--user flag, to scann all repos or add a /repository, to scan a single repo")
+    elif not (args.user or args.org) and "/" not in args.repository_or_account:
+        logging.error("You only passed an account name. Add the -u/--user flag to scan all repos of a user, -o/--org flag to scan all repos of an organization, or use account/repository format to scan a single repo")
+        os._exit(1)
+    elif args.user and args.org:
+        logging.error("You can't use both -u/--user and -o/--org flags at the same time")
         os._exit(1)
 
     if args.verbose:
@@ -136,13 +150,14 @@ if __name__ == "__main__":
         request_headers["Authorization"] = "Bearer " + github_account_token
         logging.info("Using the supplied API Token!")
     try:
-        if args.user:
-            repos = pull_all_repos(args.repository_or_username)
-            logging.info(f"Found {len(repos)} repos for user {args.repository_or_username}")
+        if args.user or args.org:
+            account_type = "organization" if args.org else "user"
+            repos = pull_all_repos(args.repository_or_account, is_org=args.org)
+            logging.info(f"Found {len(repos)} repos for {account_type} {args.repository_or_account}")
             for repo in repos:
-                find_dangling_commits(f"{args.repository_or_username}/{repo}")
+                find_dangling_commits(f"{args.repository_or_account}/{repo}")
         else:
-            find_dangling_commits(f"{args.repository_or_username}")
+            find_dangling_commits(f"{args.repository_or_account}")
 
     except Exception as e:
         data = requests.get("https://api.github.com/rate_limit", headers=request_headers)
