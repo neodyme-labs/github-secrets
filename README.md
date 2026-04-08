@@ -39,16 +39,30 @@ To run the script and scan all of a specific users repositories:
 python3 github_scanner.py -u <username>
 ```
 
+To run the script and scan all repositories of an organization:
+```bash
+python3 github_scanner.py -o <organization>
+```
+
+To test the script against trending repositories:
+```bash
+# Scan the default number of trending repos (100)
+python3 github_scanner.py -t
+
+# Scan a custom number of trending repos
+python3 github_scanner.py -t 25
+```
+
 ## Resources
 
 To check your current API rate limits and usage with token:
 ```bash
-curl -L -H "Accept: application/vnd.github+json" -H "Authorization: Bearer <your_secret_api_token>" -H "X-GitHub-Api-Version: 2022-11-28" https://api.github.com/rate_limit
+curl -s -H "Authorization: token $GITHUB_ACCOUNT_TOKEN" https://api.github.com/rate_limit   | jq -r '.resources.core | "Used: \(.used)/\(.limit) | Remaining: \(.remaining) | Resets: \(.reset)"'   | sed "s/Resets: \([0-9]*\)/Resets: $(date -d @$(curl -s -H "Authorization: token $GITHUB_ACCOUNT_TOKEN" https://api.github.com/rate_limit | jq '.resources.core.reset') 2>/dev/null)/"
 ```
 
 Without token:
 ```bash
-curl -L -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" https://api.github.com/rate_limit
+curl -s https://api.github.com/rate_limit   | jq -r '.resources.core | "Used: \(.used)/\(.limit) | Remaining: \(.remaining) | Resets: \(.reset)"'   | sed "s/Resets: \([0-9]*\)/Resets: $(date -d @$(curl -s https://api.github.com/rate_limit | jq '.resources.core.reset') 2>/dev/null)/"
 ```
 
 ## License

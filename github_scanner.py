@@ -1,4 +1,6 @@
 import requests, logging, os, argparse
+from datetime import datetime, timedelta
+request_headers = {}
 
 #############################CONFIG#############################
 # Can be created here: https://github.com/settings/tokens
@@ -6,66 +8,135 @@ import requests, logging, os, argparse
 github_account_token = os.getenv('GITHUB_ACCOUNT_TOKEN')
 #############################CONFIG#############################
 
-def elements_not_in_list(search_from, search_in):
-    return [x for x in search_from if x not in search_in]
+def get_trending_repos(count=100, days_back=365):
+    """
+    Fetches the most starred repositories created within the last X days.
+    """
+    repos = set()
+    since_date = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
+    url = f"https://api.github.com/search/repositories"
+    params = {
+        'q': f'created:>{since_date}',
+        'sort': 'stars',
+        'order': 'desc',
+        'per_page': count
+    }
+    
+    logging.info(f"Fetching top {count} trending repos since {since_date}")
+    
+    try:
+        response = requests.get(url, params=params, headers=request_headers)
+        data = response.json()
+        api_error_handling(data)
+        items = data.get('items', [])
 
-def elements_in_list(search_from, search_in):
-    return [x for x in search_from if x in search_in]
+        if not items:
+            print("No repositories found.")
+            return
 
-def commit_print(repo, commits):
-    for commit in commits:
-        print(f"https://github.com/{repo}/commit/{commit}")
+        for i, repo in enumerate(items, 1):
+            repos.add(repo['full_name'])
+        return repos
+    except requests.exceptions.RequestException as e:
+        print(f"Something went wrong: {e}")
 
 def api_error_handling(api_response):
     if 'message' in api_response:
         logging.error(api_response['message'])
         os._exit(1)
 
-# Pulls the maximal amount of commits from the history with a starting commit SHA1
-def pull_commits(repo, start_commit, already_known_commits):
-    initial_count = len(already_known_commits)
-    stop = False
-    start = start_commit
-    while not stop:
-        url = f"https://api.github.com:443/repos/{repo}/commits?per_page=100&sha={start}"
-        data = requests.get(url, headers=request_headers)
-        api_error_handling(data.json())
-        json_data = data.json()
-        if len(json_data) == 1 and json_data[0]['sha'] in already_known_commits:
-            stop = True
-        else:
-            for commit in json_data:
-                if commit['sha'] in already_known_commits:
-                    stop = True
-                else:
-                    already_known_commits.add(commit['sha'])
-        start = json_data[-1]['sha']
-    logging.info(f"Pulled {len(already_known_commits) - initial_count} commits")
+def commit_print(repo, commits):
+    for commit in commits:
+        print(f"https://github.com/{repo}/commit/{commit}")
 
-# Iterates over all publicly available branches, and queries all commits of each branch
-def pull_all_commits_from_all_branches(repo):
-    commits = set()
-    url = f"https://api.github.com:443/repos/{repo}/branches"
-    data = requests.get(url, headers=request_headers)
-    api_error_handling(data.json())
-    for branch in data.json():
-        logging.info(f"Pulling all commits for branch {branch['name']}")
-        pull_commits(repo, branch['commit']['sha'],commits)
-    logging.info(f"Pulled {len(commits)} from all branches")
-    return commits
+def pull_all_branches(repo):
+    branches = []
+    page = 1
+    while True:
+        url = f"https://api.github.com:443/repos/{repo}/branches?per_page=100&page={page}"
+        data = requests.get(url, headers=request_headers)
+        response_data = data.json()
+        api_error_handling(response_data)
+        if not response_data:
+            break
+        branches.extend(response_data)
+        if len(response_data) < 100:
+            break
+        page += 1
+    return branches
 
 # Gets all commits from the events api endpoint, that have no commits attached and thus only overwrite the current head
-def pull_all_force_pushed_commits_from_events(repo):
+def pull_all_pushevent_commits_from_events(repo):
     commits = set()
-    url = f"https://api.github.com:443/repos/{repo}/events"
-    data = requests.get(url, headers=request_headers)
-    api_error_handling(data.json())
-    for event in data.json():
-        if event["type"] == "PushEvent":
-            if len(event["payload"]["commits"]) == 0:
+    page = 1
+    # The /events endpoint caps at 300 events across 3 pages of 100.
+    while True:
+        url = f"https://api.github.com:443/repos/{repo}/events?per_page=100&page={page}"
+        data = requests.get(url, headers=request_headers)
+        response_data = data.json()
+        # GitHub caps pagination on this endpoint and returns an error body
+        # rather than an empty list once the cap is hit — treat it as "done".
+        if isinstance(response_data, dict) and "pagination is limited" in response_data.get("message", ""):
+            logging.warning(
+                f"/events pagination cap reached for {repo} (GitHub hard-limits this endpoint to ~300 events); "
+                "older force-pushed commits in this repo will not be detected. "
+                "For deeper history, consider querying GH Archive (https://www.gharchive.org/)."
+            )
+            break
+        api_error_handling(response_data)
+        if not response_data:
+            break
+        for event in response_data:
+            if event["type"] == "PushEvent":
                 commits.add(event["payload"]["before"])
+                commits.add(event["payload"]["head"])
+        if len(response_data) < 100:
+            break
+        page += 1
     logging.info(f"Pulled {len(commits)} force-pushed commits from events")
     return commits
+
+def commit_has_associated_pr(repo, commit):
+    url = f"https://api.github.com/repos/{repo}/commits/{commit}/pulls"
+    data = requests.get(url, headers=request_headers).json()
+    api_error_handling(data)
+    if data:
+        return True
+
+    # Fallback: search across all PRs in the repo that reference this SHA.
+    # Catches squash/rebase merges and deleted branches.
+    url = "https://api.github.com/search/issues"
+    params = {"q": f"repo:{repo} type:pr {commit}"}
+    resp = requests.get(url, params=params, headers=request_headers).json()
+    api_error_handling(resp)
+    return resp.get("total_count", 0) > 0
+
+def find_dangling_commits(repo):
+    probably_force_pushed_commits = set()
+    repo_branches = pull_all_branches(repo)
+    repo_pushevent_commits = pull_all_pushevent_commits_from_events(repo)
+    for commit in repo_pushevent_commits:
+        reachable = False
+        for branch in repo_branches:
+            url = f"https://api.github.com/repos/{repo}/compare/{branch['name']}...{commit}"
+            data = requests.get(url, headers=request_headers)
+            commit_diff = data.json()
+            # "No common ancestor" is a legitimate 404 response meaning the
+            # commit is not reachable from this branch — keep checking others.
+            if isinstance(commit_diff, dict) and commit_diff.get("message", "").startswith("No common ancestor"):
+                continue
+            api_error_handling(commit_diff)
+            # "identical" or "behind" means the commit is reachable from this branch
+            if commit_diff["status"] in ("identical", "behind"):
+                reachable = True
+                break
+        if not reachable and not commit_has_associated_pr(repo, commit):
+            probably_force_pushed_commits.add(commit)
+
+    if probably_force_pushed_commits:
+        print(f"\nFound these commits in {repo}, which were probably force pushed and are not in the history anymore:")
+        commit_print(repo,probably_force_pushed_commits)
+
 
 def pull_all_repos(account, is_org=False):
     repos = []
@@ -91,50 +162,25 @@ def pull_all_repos(account, is_org=False):
             
     return repos
 
-# Gets all pushed commits available from the events api endpoint
-def pull_all_commits_from_events(repo):
-    commits = set()
-    url = f"https://api.github.com:443/repos/{repo}/events"
-    data = requests.get(url, headers=request_headers)
-    api_error_handling(data.json())
-    for event in data.json():
-        if event["type"] == "PushEvent":
-            for commit in event["payload"]["commits"]:
-                commits.add(commit['sha'])
-    logging.info(f"Pulled {len(commits)} commits from events")
-    return commits
-
-def find_dangling_commits(repo):
-    historic_commits = pull_all_commits_from_all_branches(repo)
-    force_pushed_commits = pull_all_force_pushed_commits_from_events(repo)
-    event_commits = pull_all_commits_from_events(repo)
-    missing_history_commits = elements_not_in_list(event_commits, historic_commits)
-    probably_force_pushed_commits = elements_in_list(missing_history_commits,force_pushed_commits)
-    if probably_force_pushed_commits:
-        print(f"\nFound these commits in {repo}, which were probably force pushed and are not in the history anymore:")
-        commit_print(repo,probably_force_pushed_commits)
-
-    dangling_commits = elements_not_in_list(missing_history_commits, probably_force_pushed_commits)
-    if dangling_commits:
-        print(f"\nFound these dangling commits in {repo}, which were in the eventlog and are not in the history anymore:")
-        commit_print(repo,dangling_commits)
-    if not probably_force_pushed_commits and not dangling_commits:
-        print(f"\nFound no dangling commits in repository: {repo}")
 
 if __name__ == "__main__":
     logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
     parser = argparse.ArgumentParser(description='Github Deleted Secrets Scanner')
-    parser.add_argument('repository_or_account',help='Required repository or account (user/org) to scan (default format: account/repository, add -u or -o for just account name)')
+    parser.add_argument('repository_or_account', nargs='?', help='Required repository or account (user/org) to scan (default format: account/repository, add -u or -o for just account name)')
     parser.add_argument('-u', '--user', action='store_true', help='Make the script scan all repositories of a user')
     parser.add_argument('-o', '--org', action='store_true', help='Make the script scan all repositories of an organization')
+    parser.add_argument('-t', '--test', nargs='?', type=int, const=-1, default=None, help='Test the script by scanning trending repos. Optionally pass a number to limit the count. (default 100 repos)')
     parser.add_argument('-v', '--verbose', action='store_true',help='Make the script more verbose.')
     args = parser.parse_args()
 
+    if args.test is None and not args.repository_or_account:
+        parser.error("repository_or_account is required unless -t/--test is used")
+
     # Input validation
-    if (args.user or args.org) and "/" in args.repository_or_account:
+    if args.test is None and (args.user or args.org) and "/" in args.repository_or_account:
         logging.error("Account name cannot contain a slash! If you want to scan a specific repository, remove the -u/--user or -o/--org flag")
         os._exit(1)
-    elif not (args.user or args.org) and "/" not in args.repository_or_account:
+    elif args.test is None and not (args.user or args.org) and "/" not in args.repository_or_account:
         logging.error("You only passed an account name. Add the -u/--user flag to scan all repos of a user, -o/--org flag to scan all repos of an organization, or use account/repository format to scan a single repo")
         os._exit(1)
     elif args.user and args.org:
@@ -144,13 +190,17 @@ if __name__ == "__main__":
     if args.verbose:
         logging.getLogger().setLevel(logging.INFO)
     else:
-        logging.getLogger().setLevel(logging.ERROR)
-    request_headers = {}
+        logging.getLogger().setLevel(logging.WARNING)
     if github_account_token:
         request_headers["Authorization"] = "Bearer " + github_account_token
         logging.info("Using the supplied API Token!")
     try:
-        if args.user or args.org:
+        if args.test is not None:
+            trending = get_trending_repos() if args.test == -1 else get_trending_repos(args.test)
+            for repo in trending or []:
+                logging.info(f"Searching force pushed commits in {repo}")
+                find_dangling_commits(repo)
+        elif args.user or args.org:
             account_type = "organization" if args.org else "user"
             repos = pull_all_repos(args.repository_or_account, is_org=args.org)
             logging.info(f"Found {len(repos)} repos for {account_type} {args.repository_or_account}")
